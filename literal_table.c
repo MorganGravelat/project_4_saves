@@ -8,12 +8,12 @@ typedef float float_type;  // Replace with `double` if needed
 
 typedef struct literal_table_entry_s {
     struct literal_table_entry_s *next;
-    const char *text;
     float_type value;
     unsigned int offset;
 } literal_table_entry_t;
 
 static literal_table_entry_t *literal_table_head = NULL;
+static literal_table_entry_t *literal_table_tail = NULL;
 static unsigned int literal_offset = 0;
 static bool iterating = false;
 static literal_table_entry_t *iteration_next = NULL;
@@ -24,28 +24,52 @@ static bool literal_table_empty();
 void literal_table_initialize() {
     literal_table_head = NULL;
     literal_offset = 0;
-    literal_table_okay();
     iterating = false;
     iteration_next = NULL;
     literal_table_okay();
 }
-
-int literal_table_find_offset(const char *sought, float_type value) {
+//Keep a pointer to the tail
+unsigned int literal_table_add(float_type value) {
     literal_table_okay();
+
+    // Check if the literal is already in the table
     literal_table_entry_t *entry = literal_table_head;
     while (entry != NULL) {
-        if (strcmp(entry->text, sought) == 0) {
-            return entry->offset;
+        if (entry->value == value) {
+            return entry->offset;  // Return existing offset
         }
         entry = entry->next;
     }
-    return -1;
+
+    // Add new literal to the table
+    literal_table_entry_t *new_entry = (literal_table_entry_t *)malloc(sizeof(literal_table_entry_t)); //problematic
+    if (new_entry == NULL) {
+        bail_with_error("No space to allocate new literal table entry!");
+    }
+
+    new_entry->value = value;
+    new_entry->offset = literal_offset++;
+    new_entry->next = NULL;
+    if (!literal_table_head) {
+        literal_table_head = new_entry;
+        literal_table_tail = new_entry;
+    } else {
+        literal_table_tail->next = new_entry;
+    }
+    literal_table_tail = new_entry;
+
+    return new_entry->offset;  // Return new offset
 }
 
-static void literal_table_okay() {
-    bool emp = literal_table_empty();
-    assert(emp == (literal_offset == 0));
-    assert(emp == (literal_table_head == NULL));
+void literal_table_finalize(BOFFILE bf) {
+    printf("Finalizing literal table.\n");
+    literal_table_start_iteration();
+    while (!literal_table_empty() && iteration_next != NULL) {
+        int value = literal_table_iteration_next();
+        bof_write_word(bf, *(word_type *)&value);  // Write value to BOFFILE
+    }
+    literal_table_end_iteration();
+    printf("Literal table finalized.\n");
 }
 
 unsigned int literal_table_size() {
@@ -54,31 +78,6 @@ unsigned int literal_table_size() {
 
 static bool literal_table_empty() {
     return literal_offset == 0;
-}
-
-bool literal_table_present(const char *sought, float_type value) {
-    literal_table_okay();
-    return literal_table_find_offset(sought, value) >= 0;
-}
-
-unsigned int literal_table_lookup(const char *text, float_type value) {
-    int ret = literal_table_find_offset(text, value);
-    printf("literal_table_lookup: text=%s, value=%f, found=%d\n", text, value, ret); fflush(stdout);
-    if (ret >= 0) {
-        return ret;
-    }
-
-    literal_table_entry_t *new_entry = (literal_table_entry_t*)malloc(sizeof(literal_table_entry_t));
-    if (new_entry == NULL) {
-        bail_with_error("No space to allocate new literal table entry!");
-    }
-    new_entry->text = text;
-    new_entry->value = value;
-    new_entry->offset = literal_offset++;
-    new_entry->next = literal_table_head;
-
-    literal_table_head = new_entry;
-    return new_entry->offset;
 }
 
 void literal_table_start_iteration() {
@@ -97,7 +96,12 @@ void literal_table_end_iteration() {
 float_type literal_table_iteration_next() {
     assert(iteration_next != NULL);
     float_type ret = iteration_next->value;
-    printf("Iteration next value: %f\n", ret); fflush(stdout);
     iteration_next = iteration_next->next;
     return ret;
+}
+
+static void literal_table_okay() {
+    bool emp = literal_table_empty();
+    assert(emp == (literal_offset == 0));
+    assert(emp == (literal_table_head == NULL));
 }
